@@ -25,10 +25,20 @@ var (
 	httpClient *http.Client
 )
 
+func Usage() {
+	fmt.Fprintln(os.Stderr,
+		`Usage:
+	checkconn -h
+	checkconn host1:port1 [host2:port2 https://host …]
+	checkconn -r host1 [host2 …]
+
+If the first argument is -r (or --resolv/--resolve) then checkconn will not
+determine connectivity but will perform DNS resolution.`)
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: checkconn host1:port1 "+
-			"[host2:port2 https://host …]")
+		Usage()
 		os.Exit(1)
 	}
 
@@ -41,12 +51,40 @@ func main() {
 		Timeout: 2 * time.Second,
 	}
 
+	if len(os.Args[1]) > 0 && os.Args[1][0] == '-' {
+		switch os.Args[1] {
+		case "-h", "--help":
+			Usage()
+			return
+
+		case "-r", "--resolv":
+			CheckDNS(os.Args[2:])
+
+		case "--":
+			CheckConn(os.Args[2:])
+
+		default:
+			fmt.Fprintln(os.Stderr, "unrecognised argument: ",
+				os.Args[1])
+			os.Exit(1)
+		}
+	}
+
+	CheckConn(os.Args[1:])
+}
+
+func CheckDNS(args []string) {
+	fmt.Fprintln(os.Stderr, "not implemented yet")
+	os.Exit(1)
+}
+
+func CheckConn(args []string) {
 	var (
 		results    []chan result
 		nr, maxTgt int
 	)
 
-	for _, arg := range os.Args[1:] {
+	for _, arg := range args {
 		if len(arg) > maxTgt {
 			maxTgt = len(arg)
 		}
