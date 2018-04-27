@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -73,11 +74,6 @@ func main() {
 	CheckConn(os.Args[1:])
 }
 
-func CheckDNS(args []string) {
-	fmt.Fprintln(os.Stderr, "not implemented yet")
-	os.Exit(1)
-}
-
 func CheckConn(args []string) {
 	var (
 		results    []chan result
@@ -106,6 +102,116 @@ func CheckConn(args []string) {
 			result.message)
 	}
 	os.Exit(exitCode)
+}
+
+func CheckDNS(args []string) {
+	var (
+		results    []chan []result
+		nr, maxTgt int
+	)
+
+	resolv := &net.Resolver{
+		PreferGo: true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	for _, arg := range args {
+		if len(arg) > maxTgt {
+			maxTgt = len(arg)
+		}
+		r := make(chan []result)
+		results = append(results, r)
+		go lookup(ctx, resolv, r, arg)
+		nr++
+	}
+
+	exitCode := 0
+	for i := 0; i < nr; i++ {
+		result := <-results[i]
+		icon := iconGood
+		if !result[0].ok {
+			icon = iconBad
+			exitCode = 1
+		}
+
+		tgt := result[0].target
+		for _, r := range result {
+			fmt.Printf("%s %-*s: %s\n", icon, maxTgt, tgt,
+				r.message)
+			tgt = ""
+		}
+	}
+	cancel()
+
+	os.Exit(exitCode)
+}
+
+func lookup(ctx context.Context, resolv *net.Resolver,
+	results chan<- []result, target string) {
+	target = strings.TrimPrefix(target, "http://")
+	target = strings.TrimPrefix(target, "https://")
+	cut := strings.IndexAny(target, ":/")
+	if cut != -1 {
+		target = target[:cut]
+	}
+
+	var ret []result
+	defer func() { results <- ret }()
+
+	// lookup the CNAME first
+	cname, err := resolv.LookupCNAME(ctx, target)
+	if err != nil {
+		ret = append(ret, result{
+			target:  target,
+			message: "ERR   | " + err.Error(),
+		})
+		return
+	}
+
+	// Go returns cname == target if there is no explicit CNAME record
+	if cname != target && cname != target+"." {
+		ret = append(ret, result{
+			ok:      true,
+			target:  target,
+			message: "CNAME | " + cname,
+		})
+	}
+
+	// now perform standard DNS lookup
+	ips, err := resolv.LookupIPAddr(ctx, target)
+	if err != nil {
+		ret = append(ret, result{
+			target:  target,
+			message: "ERR   | " + err.Error(),
+		})
+		ret[0].ok = false
+		return
+	}
+
+	if len(ips) == 0 {
+		ret = append(ret, result{
+			target:  target,
+			message: "ERR   | no IP addresses found",
+		})
+		ret[0].ok = false
+		return
+	}
+
+	for _, ip := range ips {
+		if ip4 := ip.IP.To4(); ip4 != nil {
+			ret = append(ret, result{
+				target:  target,
+				message: "A     | " + ip4.String(),
+				ok:      true,
+			})
+		} else {
+			ret = append(ret, result{
+				target:  target,
+				message: "AAAA  | " + ip.String(),
+				ok:      true,
+			})
+		}
+	}
 }
 
 func examine(results chan<- result, target string) {
