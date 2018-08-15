@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mattn/go-isatty"
 )
 
 type result struct {
@@ -17,10 +19,22 @@ type result struct {
 	message string
 }
 
-const (
-	iconGood = "\033[32m✔\033[m"
-	iconBad  = "\033[31m✘\033[m"
-)
+func icon(good bool) string {
+	tty := isatty.IsTerminal(os.Stdout.Fd())
+	if tty {
+		if good {
+			return "\033[32m✔\033[m"
+		} else {
+			return "\033[31m✘\033[m"
+		}
+	}
+
+	if good {
+		return "✔"
+	}
+
+	return "✘"
+}
 
 var (
 	httpClient *http.Client
@@ -93,12 +107,12 @@ func CheckConn(args []string) {
 	exitCode := 0
 	for i := 0; i < nr; i++ {
 		result := <-results[i]
-		icon := iconGood
+		good := true
 		if !result.ok {
-			icon = iconBad
+			good = false
 			exitCode = 1
 		}
-		fmt.Printf("%s %-*s: %s\n", icon, maxTgt, result.target,
+		fmt.Printf("%s %-*s: %s\n", icon(good), maxTgt, result.target,
 			result.message)
 	}
 	os.Exit(exitCode)
@@ -128,15 +142,15 @@ func CheckDNS(args []string) {
 	exitCode := 0
 	for i := 0; i < nr; i++ {
 		result := <-results[i]
-		icon := iconGood
+		good := true
 		if !result[0].ok {
-			icon = iconBad
+			good = false
 			exitCode = 1
 		}
 
 		tgt := result[0].target
 		for _, r := range result {
-			fmt.Printf("%s %-*s: %s\n", icon, maxTgt, tgt,
+			fmt.Printf("%s %-*s: %s\n", icon(good), maxTgt, tgt,
 				r.message)
 			tgt = ""
 		}
