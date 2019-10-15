@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,27 +19,68 @@ type result struct {
 }
 
 const (
-	iconGood = "\033[32m✔\033[m"
-	iconBad  = "\033[31m✘\033[m"
+	tick  = "✔"
+	cross = "✘"
 )
 
 var (
+	iconGood   = "\033[32m" + tick + "\033[m"
+	iconBad    = "\033[31m" + cross + "\033[m"
 	httpClient *http.Client
+
+	flagHelp     = flag.Bool("h", false, "display help")
+	flagNoColour = flag.Bool("C", false, "inhibit colour output")
+	flagIPv4     = flag.Bool("4", false, "force connection via IPv4")
+	flagIPv6     = flag.Bool("6", false, "force connection via IPv6")
+	flagTimeout  = flag.Duration("t", 2*time.Second, "timeout (DNS+connection)")
+	flagResolv   = flag.Bool("r", false, "resolve names only")
+
+	netmode = "tcp"
 )
 
 func Usage() {
 	fmt.Fprintln(os.Stderr,
 		`Usage:
 	checkconn -h
-	checkconn host1:port1 [host2:port2 https://host …]
-	checkconn -r host1 [host2 …]
+	checkconn [flags] host1:port1 [host2:port2 https://host …]
+	checkconn [flags] -r host1 [host2 …]
 
-If the first argument is -r (or --resolv/--resolve) then checkconn will not
-determine connectivity but will perform DNS resolution.`)
+If the first argument is -r then checkconn will not determine connectivity but
+will perform DNS resolution.
+
+Flags:
+  -r       Resolve names only.
+  -4       Use IPv4 only.
+  -6   	   Use IPv6 only.
+  -C   	   Inhibit colour output.
+  -t <val> Timeout (default: "2s").`)
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	flag.Parse()
+	if *flagHelp {
+		Usage()
+		return
+	}
+
+	if *flagNoColour {
+		iconGood = tick
+		iconBad = cross
+	}
+
+	switch {
+	case *flagIPv4 && *flagIPv6:
+		fmt.Fprintln(os.Stderr, "can only specify one of -4 or -6")
+		os.Exit(1)
+
+	case *flagIPv4:
+		netmode = "tcp4"
+
+	case *flagIPv6:
+		netmode = "tcp6"
+	}
+
+	if flag.NArg() == 0 {
 		Usage()
 		os.Exit(1)
 	}
@@ -49,29 +91,14 @@ func main() {
 				InsecureSkipVerify: true,
 			},
 		},
-		Timeout: 2 * time.Second,
+		Timeout: *flagTimeout,
 	}
 
-	if len(os.Args[1]) > 0 && os.Args[1][0] == '-' {
-		switch os.Args[1] {
-		case "-h", "--help":
-			Usage()
-			return
-
-		case "-r", "--resolv":
-			CheckDNS(os.Args[2:])
-
-		case "--":
-			CheckConn(os.Args[2:])
-
-		default:
-			fmt.Fprintln(os.Stderr, "unrecognised argument: ",
-				os.Args[1])
-			os.Exit(1)
-		}
+	if *flagResolv {
+		CheckDNS(flag.Args())
+	} else {
+		CheckConn(flag.Args())
 	}
-
-	CheckConn(os.Args[1:])
 }
 
 func CheckConn(args []string) {
@@ -114,7 +141,7 @@ func CheckDNS(args []string) {
 		PreferGo: true,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), *flagTimeout)
 	for _, arg := range args {
 		if len(arg) > maxTgt {
 			maxTgt = len(arg)
@@ -223,7 +250,7 @@ func examine(results chan<- result, target string) {
 	}
 
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", target, time.Second)
+	conn, err := net.DialTimeout(netmode, target, *flagTimeout)
 	if err != nil {
 		results <- result{
 			target:  target,
